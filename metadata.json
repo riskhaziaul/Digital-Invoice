@@ -1,0 +1,6 @@
+{
+  "name": "Invoice Digital",
+  "description": "Aplikasi pengelolaan invoice profesional dengan multi-role, persetujuan penerbitan, penyimpanan PDF, dan link penerima aman.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
