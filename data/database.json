@@ -1,0 +1,23 @@
+{
+  "invoices": [
+    {
+      "id": "inv-demo-1",
+      "invoice_number": "INV-2026-0001",
+      "status": "Terbit",
+      "active_token": "test-token-12345678901234567890123456789012",
+      "revision_number": 1,
+      "payments": [],
+      "current_version": {
+        "grand_total": 1500000,
+        "client_snapshot": {
+          "company_name": "PT Contoh Sukses"
+        }
+      }
+    }
+  ],
+  "tokens": {},
+  "clients": [],
+  "settings": null,
+  "users": [],
+  "auditLogs": []
+}

@@ -1,16 +1,34 @@
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
-import { InvoiceVersion } from '../types';
-import { formatRupiah, formatAngka, formatTanggalIndonesia } from './terbilang';
+import { InvoiceAttachment, InvoiceVersion } from '../types';
+import { formatRupiah, formatUSD, formatAngka, formatTanggalIndonesia, getExchangeRatesSummary } from './terbilang';
 
 export interface PDFGenerationOptions {
   invoiceNumber: string;
   version: InvoiceVersion;
+  attachments?: InvoiceAttachment[];
+  paymentStatus?: string;
+  documentStatus?: string;
+  createdByName?: string;
+}
+
+// Helper to sanitize text for WinAnsi encoding in pdf-lib StandardFonts
+export function cleanWinAnsi(str?: string): string {
+  if (!str) return '';
+  return String(str)
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/[\u2013\u2014]/g, '-')
+    .replace(/\u2022/g, '-')
+    .replace(/\u2026/g, '...')
+    .replace(/\u00A0/g, ' ')
+    .replace(/[^\x00-\xFF]/g, '');
 }
 
 // Helper to wrap long text into lines fitting max width
 function wrapText(text: string, font: any, fontSize: number, maxWidth: number): string[] {
   if (!text) return [];
-  const paragraphs = text.split('\n');
+  const cleaned = cleanWinAnsi(text);
+  const paragraphs = cleaned.split('\n');
   const lines: string[] = [];
 
   for (const para of paragraphs) {
@@ -37,7 +55,14 @@ function wrapText(text: string, font: any, fontSize: number, maxWidth: number): 
   return lines;
 }
 
-export async function generateInvoicePDF({ invoiceNumber, version }: PDFGenerationOptions): Promise<Uint8Array> {
+export async function generateInvoicePDF({
+  invoiceNumber,
+  version,
+  attachments: customAttachments,
+  paymentStatus,
+  documentStatus,
+  createdByName,
+}: PDFGenerationOptions): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.create();
 
   const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -195,7 +220,7 @@ export async function generateInvoicePDF({ invoiceNumber, version }: PDFGenerati
           font: fontRegular,
           color: mutedColor,
         });
-        currentPage.drawText(value, {
+        currentPage.drawText(cleanWinAnsi(value), {
           x: rightX - 100,
           y: rowY,
           size: 8.5,
@@ -232,7 +257,8 @@ export async function generateInvoicePDF({ invoiceNumber, version }: PDFGenerati
       });
 
       y -= 13;
-      currentPage.drawText(`${client.sapaan} ${client.pic_name}`, {
+      const clientTitle = cleanWinAnsi(`${client.sapaan || ''} ${client.pic_name || ''}`.trim());
+      currentPage.drawText(clientTitle || 'Pelanggan Terhormat', {
         x: margin,
         y,
         size: 10.5,
@@ -242,7 +268,7 @@ export async function generateInvoicePDF({ invoiceNumber, version }: PDFGenerati
 
       if (client.company_name) {
         y -= 12;
-        currentPage.drawText(client.company_name, {
+        currentPage.drawText(cleanWinAnsi(client.company_name), {
           x: margin,
           y,
           size: 9.5,
@@ -343,8 +369,16 @@ export async function generateInvoicePDF({ invoiceNumber, version }: PDFGenerati
 
   // Draw Items
   version.items.forEach((item, index) => {
-    const descLines = wrapText(item.description, fontRegular, 8.5, colX.qty - colX.desc - 12);
-    const rowHeight = Math.max(20, descLines.length * 11 + 8);
+    const isUSD = item.currency === 'USD' || (item.unit_price_usd !== undefined && item.unit_price_usd > 0);
+    const rawDescLines = wrapText(item.description, fontRegular, 8.5, colX.qty - colX.desc - 12);
+    const descLines = [...rawDescLines];
+    if (isUSD) {
+      const customRate = item.custom_exchange_rate || version.custom_exchange_rate || 16250;
+      descLines.push(`* USD $${formatAngka(item.unit_price_usd || 0)} @ Kurs: Rp ${formatAngka(customRate)}`);
+    }
+
+    const minRowHeight = isUSD ? 28 : 20;
+    const rowHeight = Math.max(minRowHeight, descLines.length * 11 + 8);
 
     checkPageBreak(rowHeight);
 
@@ -369,12 +403,13 @@ export async function generateInvoicePDF({ invoiceNumber, version }: PDFGenerati
 
     // Description (multi-line)
     descLines.forEach((line, lIdx) => {
+      const isRateLine = isUSD && lIdx === descLines.length - 1;
       currentPage.drawText(line, {
         x: colX.desc + 6,
         y: itemY - lIdx * 11,
-        size: 8.5,
-        font: fontRegular,
-        color: textColor,
+        size: isRateLine ? 7.5 : 8.5,
+        font: isRateLine ? fontOblique : fontRegular,
+        color: isRateLine ? rgb(0.08, 0.45, 0.25) : textColor,
       });
     });
 
@@ -388,7 +423,7 @@ export async function generateInvoicePDF({ invoiceNumber, version }: PDFGenerati
     });
 
     // Unit
-    currentPage.drawText(item.unit || '-', {
+    currentPage.drawText(cleanWinAnsi(item.unit) || '-', {
       x: colX.unit + 6,
       y: itemY,
       size: 8.5,
@@ -397,22 +432,57 @@ export async function generateInvoicePDF({ invoiceNumber, version }: PDFGenerati
     });
 
     // Unit Price
-    currentPage.drawText(formatRupiah(item.unit_price), {
-      x: colX.price + 6,
-      y: itemY,
-      size: 8.5,
-      font: fontRegular,
-      color: textColor,
-    });
+    if (isUSD) {
+      currentPage.drawText(`$ ${formatAngka(item.unit_price_usd || 0)}`, {
+        x: colX.price + 6,
+        y: itemY,
+        size: 8.5,
+        font: fontBold,
+        color: textColor,
+      });
+      currentPage.drawText(`(${formatRupiah(item.unit_price)})`, {
+        x: colX.price + 6,
+        y: itemY - 11,
+        size: 7,
+        font: fontRegular,
+        color: mutedColor,
+      });
+    } else {
+      currentPage.drawText(formatRupiah(item.unit_price), {
+        x: colX.price + 6,
+        y: itemY,
+        size: 8.5,
+        font: fontRegular,
+        color: textColor,
+      });
+    }
 
     // Item Total
-    currentPage.drawText(formatRupiah(item.total), {
-      x: colX.total + 6,
-      y: itemY,
-      size: 8.5,
-      font: fontBold,
-      color: textColor,
-    });
+    if (isUSD) {
+      currentPage.drawText(formatRupiah(item.total), {
+        x: colX.total + 6,
+        y: itemY,
+        size: 8.5,
+        font: fontBold,
+        color: textColor,
+      });
+      const totUsd = item.total_usd || (item.quantity * (item.unit_price_usd || 0));
+      currentPage.drawText(`($ ${formatAngka(totUsd)})`, {
+        x: colX.total + 6,
+        y: itemY - 11,
+        size: 7,
+        font: fontBold,
+        color: rgb(0.08, 0.45, 0.25),
+      });
+    } else {
+      currentPage.drawText(formatRupiah(item.total), {
+        x: colX.total + 6,
+        y: itemY,
+        size: 8.5,
+        font: fontBold,
+        color: textColor,
+      });
+    }
 
     y -= rowHeight;
   });
@@ -466,6 +536,40 @@ export async function generateInvoicePDF({ invoiceNumber, version }: PDFGenerati
     });
   });
 
+  // If USD items exist, draw an informative exchange rate note box below Terbilang
+  const hasUsdItemsInDoc = version.items.some(
+    (i) => i.currency === 'USD' || (i.unit_price_usd !== undefined && i.unit_price_usd > 0)
+  );
+  if (hasUsdItemsInDoc) {
+    const totalUsdInDoc = version.items.reduce(
+      (s, i) => s + (i.currency === 'USD' ? (Number(i.total_usd) || 0) : 0),
+      0
+    );
+    const kursNoticeY = summaryTop - 52 - 24;
+
+    currentPage.drawRectangle({
+      x: margin,
+      y: kursNoticeY,
+      width: leftBoxWidth,
+      height: 20,
+      color: rgb(0.96, 0.98, 0.96),
+      borderColor: rgb(0.75, 0.88, 0.78),
+      borderWidth: 0.5,
+    });
+
+    const ratesSummary = getExchangeRatesSummary(version.items, version.custom_exchange_rate);
+    currentPage.drawText(
+      cleanWinAnsi(`* Kurs Valas: ${ratesSummary} | Komponen Valas: $ ${formatAngka(totalUsdInDoc)}`),
+      {
+        x: margin + 8,
+        y: kursNoticeY + 6,
+        size: 7.2,
+        font: fontBold,
+        color: rgb(0.08, 0.45, 0.25),
+      }
+    );
+  }
+
   // Right side: Subtotal, Discount, Tax, Grand Total
   let rightY = summaryTop - 4;
   const drawSummaryLine = (label: string, value: string, isBold: boolean = false, isHighlight: boolean = false) => {
@@ -516,12 +620,12 @@ export async function generateInvoicePDF({ invoiceNumber, version }: PDFGenerati
   rightY -= 2;
   drawSummaryLine('Grand Total', formatRupiah(version.grand_total), true, true);
 
-  y = Math.min(summaryTop - 56, rightY - 10);
+  // Exact bottom coordinate of the summary section (accounts for Kurs Valas notice if USD exists)
+  const leftSummaryBottom = hasUsdItemsInDoc ? summaryTop - 52 - 26 : summaryTop - 52;
+  const totalsSectionBottom = Math.min(leftSummaryBottom, rightY - 8);
+  y = totalsSectionBottom - 10;
 
-  // Payment info & terms section
-  checkPageBreak(120);
-
-  y -= 8;
+  // Divider line after summary
   currentPage.drawLine({
     start: { x: margin, y },
     end: { x: pageWidth - margin, y },
@@ -530,97 +634,299 @@ export async function generateInvoicePDF({ invoiceNumber, version }: PDFGenerati
   });
   y -= 14;
 
-  // Two column footer: Left = Bank Account & Payment Terms, Right = Signature/Notes
-  const colWidth = (contentWidth - 20) / 2;
+  // General Clause / Klausul Umum Section (Rendered UTUH / Complete)
+  let rawClauses = version.general_clauses || [];
+  if (rawClauses.length === 0 && version.client_notes && version.client_notes.includes('Item tambahan akan dikenakan biaya tambahan')) {
+    rawClauses = [
+      {
+        id: 'clause-default-1',
+        title: 'General Clause',
+        content: '1. Item tambahan akan dikenakan biaya tambahan\n2. Biaya Tambahan akan ditagih langsung, di luar tagihan utama',
+        is_active: true,
+      },
+    ];
+  }
+  const activeClauses = rawClauses.filter((c) => c.is_active !== false);
 
-  // Rekening Pembayaran (Active Account only: blu by BCA Digital)
+  if (activeClauses.length > 0) {
+    checkPageBreak(45);
+
+    currentPage.drawText('GENERAL CLAUSE:', {
+      x: margin,
+      y,
+      size: 8.5,
+      font: fontBold,
+      color: primaryColor,
+    });
+    y -= 12;
+
+    for (let cIdx = 0; cIdx < activeClauses.length; cIdx++) {
+      const clause = activeClauses[cIdx];
+      const isDefaultFirst = cIdx === 0 && (!clause.title || clause.title.toLowerCase().includes('general clause'));
+      const cTitle = cleanWinAnsi(isDefaultFirst ? '' : (clause.title ? `${cIdx + 1}. ${clause.title}:` : `${cIdx + 1}.`));
+      const cLines = wrapText(clause.content, fontRegular, 8, contentWidth - 28);
+      const clauseNeededHeight = (cTitle ? 12 : 0) + cLines.length * 10 + 4;
+      checkPageBreak(clauseNeededHeight);
+
+      if (cTitle) {
+        currentPage.drawText(cTitle, {
+          x: margin + 6,
+          y,
+          size: 8,
+          font: fontBold,
+          color: textColor,
+        });
+        y -= 11;
+      }
+
+      for (const cLine of cLines) {
+        currentPage.drawText(cLine, {
+          x: margin + 6,
+          y,
+          size: 8,
+          font: fontRegular,
+          color: textColor,
+        });
+        y -= 10;
+      }
+      y -= 3;
+    }
+
+    y -= 4;
+    currentPage.drawLine({
+      start: { x: margin, y },
+      end: { x: pageWidth - margin, y },
+      thickness: 0.5,
+      color: borderColor,
+    });
+    y -= 14;
+  }
+
+  // Payment Info (Left Column) & Hormat Kami / Creator Signature (Right Column)
+  const leftColWidth = contentWidth * 0.55;
+  const rightColX = margin + leftColWidth + 20;
+  const rightColWidth = contentWidth - leftColWidth - 20;
+
+  const termsLines = version.payment_terms
+    ? wrapText(version.payment_terms, fontRegular, 7.5, leftColWidth)
+    : [];
+
+  const isNotesDuplicateOfClause = Boolean(
+    version.client_notes &&
+      (version.client_notes.includes('Item tambahan akan dikenakan biaya tambahan') ||
+        version.client_notes.trim().toLowerCase() === 'general clause')
+  );
+
+  const notesLines = version.client_notes && !isNotesDuplicateOfClause
+    ? wrapText(version.client_notes, fontRegular, 7.5, leftColWidth)
+    : [];
+
+  const neededLeftHeight = 55 + (termsLines.length > 0 ? 12 + termsLines.length * 9 : 0) + (notesLines.length > 0 ? 12 + notesLines.length * 9 : 0);
+  const neededRightHeight = 65;
+  checkPageBreak(Math.max(neededLeftHeight, neededRightHeight));
+
+  const sectionStartY = y;
+
+  // --- Left Column: Bank Account & Payment Terms / Full Notes ---
+  let lY = sectionStartY;
   const bank = version.bank_snapshot;
   currentPage.drawText('REKENING PEMBAYARAN RESMI:', {
     x: margin,
-    y,
+    y: lY,
     size: 8,
     font: fontBold,
     color: primaryColor,
   });
+  lY -= 12;
 
-  y -= 12;
-  currentPage.drawText(`Bank: ${bank.bank_name}`, {
+  currentPage.drawText(cleanWinAnsi(`Bank: ${bank?.bank_name || '-'}`), {
     x: margin,
-    y,
+    y: lY,
     size: 8.5,
     font: fontRegular,
     color: textColor,
   });
+  lY -= 11;
 
-  y -= 11;
-  currentPage.drawText(`Nomor Rekening: ${bank.account_number}`, {
+  currentPage.drawText(cleanWinAnsi(`Nomor Rekening: ${bank?.account_number || '-'}`), {
     x: margin,
-    y,
+    y: lY,
     size: 9,
     font: fontBold,
     color: primaryColor,
   });
+  lY -= 11;
 
-  y -= 11;
-  currentPage.drawText(`Atas Nama: ${bank.account_name}`, {
+  currentPage.drawText(cleanWinAnsi(`Atas Nama: ${bank?.account_name || '-'}`), {
     x: margin,
-    y,
+    y: lY,
     size: 8.5,
     font: fontRegular,
     color: textColor,
   });
 
-  if (version.payment_terms) {
-    y -= 12;
+  if (version.payment_terms && termsLines.length > 0) {
+    lY -= 11;
     currentPage.drawText('Ketentuan Pembayaran:', {
       x: margin,
-      y,
+      y: lY,
       size: 7.5,
       font: fontBold,
       color: mutedColor,
     });
-    const termsLines = wrapText(version.payment_terms, fontRegular, 7.5, colWidth);
-    for (const tLine of termsLines.slice(0, 3)) {
-      y -= 9;
-      currentPage.drawText(tLine, { x: margin, y, size: 7.5, font: fontRegular, color: mutedColor });
+    for (const tLine of termsLines) {
+      lY -= 9;
+      currentPage.drawText(tLine, { x: margin, y: lY, size: 7.5, font: fontRegular, color: mutedColor });
     }
   }
 
-  // Right column: Catatan Klien & Tanda Terima
-  const rightColX = margin + colWidth + 20;
-  let rFooterY = y + (version.payment_terms ? 34 : 22);
-
-  if (version.client_notes) {
+  if (version.client_notes && notesLines.length > 0) {
+    lY -= 11;
     currentPage.drawText('Catatan:', {
-      x: rightColX,
-      y: rFooterY,
+      x: margin,
+      y: lY,
       size: 7.5,
       font: fontBold,
       color: mutedColor,
     });
-    const notesLines = wrapText(version.client_notes, fontRegular, 7.5, colWidth);
-    for (const nLine of notesLines.slice(0, 3)) {
-      rFooterY -= 9;
-      currentPage.drawText(nLine, { x: rightColX, y: rFooterY, size: 7.5, font: fontRegular, color: mutedColor });
+    for (const nLine of notesLines) {
+      lY -= 9;
+      currentPage.drawText(nLine, { x: margin, y: lY, size: 7.5, font: fontRegular, color: mutedColor });
     }
-    rFooterY -= 6;
   }
+
+  // --- Right Column: Hormat Kami & Creator Signature Alone (No Digital/Marcomm, No Pembuat Invoice caption) ---
+  let rY = sectionStartY;
 
   currentPage.drawText('Hormat Kami,', {
     x: rightColX,
-    y: rFooterY - 4,
-    size: 8,
+    y: rY,
+    size: 8.5,
     font: fontRegular,
     color: mutedColor,
   });
+  rY -= 45; // Space for signature / stamp
 
-  currentPage.drawText(version.publisher_snapshot.name || 'DIGITAL / MARCOMM TEAM', {
+  const rawCreator = createdByName || version.created_by_name || 'Riskha Ziaulhusna';
+  const cleanCreator = cleanWinAnsi(
+    rawCreator.replace(/\s*\((Owner|Admin|Staff|Viewer)\)/gi, '').trim()
+  );
+
+  currentPage.drawText(`( ${cleanCreator} )`, {
     x: rightColX,
-    y: rFooterY - 36,
+    y: rY,
     size: 8.5,
     font: fontBold,
-    color: primaryColor,
+    color: textColor,
   });
+  rY -= 8;
+
+  // Move y to the bottom of the lowest column
+  y = Math.min(lY, rY) - 16;
+
+  // Lampiran Dokumen Resmi (Attachments) on Invoice PDF
+  const attachments = customAttachments || version.attachments || [];
+  if (attachments.length > 0) {
+    const neededAttHeight = 35 + Math.min(attachments.length, 6) * 16;
+    checkPageBreak(neededAttHeight);
+
+    y -= 4;
+    currentPage.drawText(`LAMPIRAN DOKUMEN PENDUKUNG (${attachments.length} BERKAS):`, {
+      x: margin,
+      y,
+      size: 8,
+      font: fontBold,
+      color: primaryColor,
+    });
+    y -= 10;
+
+    const attBoxX = margin;
+    const attBoxWidth = contentWidth;
+
+    // Table Header
+    currentPage.drawRectangle({
+      x: attBoxX,
+      y: y - 14,
+      width: attBoxWidth,
+      height: 14,
+      color: rgb(0.95, 0.96, 0.98),
+      borderColor: borderColor,
+      borderWidth: 0.5,
+    });
+
+    currentPage.drawText('NO', { x: attBoxX + 6, y: y - 10, size: 7, font: fontBold, color: mutedColor });
+    currentPage.drawText('KATEGORI', { x: attBoxX + 26, y: y - 10, size: 7, font: fontBold, color: mutedColor });
+    currentPage.drawText('NAMA DOKUMEN / BERKAS', { x: attBoxX + 115, y: y - 10, size: 7, font: fontBold, color: mutedColor });
+    currentPage.drawText('UKURAN / KETERANGAN', { x: attBoxX + attBoxWidth - 140, y: y - 10, size: 7, font: fontBold, color: mutedColor });
+    y -= 14;
+
+    attachments.forEach((att, idx) => {
+      checkPageBreak(16);
+      const isEven = idx % 2 === 0;
+      currentPage.drawRectangle({
+        x: attBoxX,
+        y: y - 15,
+        width: attBoxWidth,
+        height: 15,
+        color: isEven ? rgb(1, 1, 1) : rgb(0.985, 0.985, 0.99),
+        borderColor: borderColor,
+        borderWidth: 0.5,
+      });
+
+      // No
+      currentPage.drawText(`${idx + 1}.`, {
+        x: attBoxX + 6,
+        y: y - 11,
+        size: 7.5,
+        font: fontRegular,
+        color: textColor,
+      });
+
+      // Category
+      const catLabel = att.category ? `[${att.category}]` : '[BERKAS]';
+      currentPage.drawText(cleanWinAnsi(catLabel), {
+        x: attBoxX + 26,
+        y: y - 11,
+        size: 7,
+        font: fontBold,
+        color: primaryColor,
+      });
+
+      // Name
+      const fileNameTrunc = att.name.length > 40 ? att.name.substring(0, 37) + '...' : att.name;
+      currentPage.drawText(cleanWinAnsi(fileNameTrunc), {
+        x: attBoxX + 115,
+        y: y - 11,
+        size: 7.5,
+        font: fontRegular,
+        color: textColor,
+      });
+
+      // Description / Size
+      const sizeStr = att.size ? `${(att.size / 1024).toFixed(0)} KB` : '';
+      const descStr = att.description ? `${att.description} ${sizeStr ? `(${sizeStr})` : ''}` : sizeStr || 'Terlampir resmi';
+      const descTrunc = descStr.length > 28 ? descStr.substring(0, 25) + '...' : descStr;
+      currentPage.drawText(cleanWinAnsi(descTrunc), {
+        x: attBoxX + attBoxWidth - 140,
+        y: y - 11,
+        size: 7,
+        font: fontOblique,
+        color: mutedColor,
+      });
+
+      y -= 15;
+    });
+  } else {
+    y -= 4;
+    currentPage.drawText('Lampiran Dokumen: - (Tidak ada berkas pendukung terlampir)', {
+      x: margin,
+      y,
+      size: 7.5,
+      font: fontOblique,
+      color: mutedColor,
+    });
+    y -= 10;
+  }
 
   // Footer on all pages
   const totalPages = pdfDoc.getPageCount();

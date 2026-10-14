@@ -9,6 +9,7 @@ import {
   User,
   AlertCircle,
   CheckCircle2,
+  KeyRound,
 } from 'lucide-react';
 import { UserProfile, UserRole } from '../types';
 import { dataService } from '../lib/data-service';
@@ -27,7 +28,13 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({
   const [showAddModal, setShowAddModal] = useState(false);
   const [newEmail, setNewEmail] = useState('');
   const [newName, setNewName] = useState('');
+  const [newUsername, setNewUsername] = useState('');
+  const [newPassword, setNewPassword] = useState('');
   const [newRole, setNewRole] = useState<UserRole>('STAFF');
+
+  const [editCredsUser, setEditCredsUser] = useState<UserProfile | null>(null);
+  const [editUsername, setEditUsername] = useState('');
+  const [editPassword, setEditPassword] = useState('');
 
   if (currentUser.role !== 'OWNER') {
     return (
@@ -56,6 +63,8 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({
       email: newEmail.trim(),
       fullName: newName.trim(),
       role: newRole,
+      username: newUsername.trim() || undefined,
+      password: newPassword.trim() || undefined,
     });
 
     alert(res.message);
@@ -63,6 +72,8 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({
       setShowAddModal(false);
       setNewEmail('');
       setNewName('');
+      setNewUsername('');
+      setNewPassword('');
       setNewRole('STAFF');
       onRefresh();
     }
@@ -177,6 +188,7 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({
           <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200">
             <tr>
               <th className="py-3.5 px-4">Nama Pengguna</th>
+              <th className="py-3.5 px-4">Username & Kredensial</th>
               <th className="py-3.5 px-4">Email</th>
               <th className="py-3.5 px-4">Role Akses</th>
               <th className="py-3.5 px-4">Status Akun</th>
@@ -203,6 +215,13 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({
                           </span>
                         )}
                       </div>
+                    </div>
+                  </td>
+
+                  <td className="py-3.5 px-4">
+                    <div className="space-y-0.5">
+                      <p className="font-mono font-bold text-slate-800">@{u.username || u.email.split('@')[0]}</p>
+                      <p className="text-[10px] text-slate-400 font-mono">Pass: {u.password || '••••••'}</p>
                     </div>
                   </td>
 
@@ -239,20 +258,37 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({
                   </td>
 
                   <td className="py-3.5 px-4 text-right">
-                    {!isOnlyOwner ? (
+                    <div className="flex items-center justify-end gap-1.5">
                       <button
-                        onClick={() => handleToggleStatus(u.id)}
-                        className={`px-2.5 py-1 text-[11px] font-semibold rounded border transition-colors ${
-                          u.is_active
-                            ? 'text-rose-600 border-rose-200 hover:bg-rose-50'
-                            : 'text-emerald-700 border-emerald-200 hover:bg-emerald-50'
-                        }`}
+                        type="button"
+                        onClick={() => {
+                          setEditCredsUser(u);
+                          setEditUsername(u.username || u.email.split('@')[0]);
+                          setEditPassword(u.password || '');
+                        }}
+                        className="px-2 py-1 text-[11px] font-semibold rounded border border-slate-200 text-slate-700 hover:bg-slate-50 flex items-center gap-1 transition-colors cursor-pointer"
+                        title="Ubah username atau kata sandi"
                       >
-                        {u.is_active ? 'Nonaktifkan' : 'Aktifkan'}
+                        <KeyRound className="w-3 h-3 text-slate-500" />
+                        <span>Sandi</span>
                       </button>
-                    ) : (
-                      <span className="text-[10px] text-slate-400 italic">Owner Terakhir</span>
-                    )}
+
+                      {!isOnlyOwner ? (
+                        <button
+                          type="button"
+                          onClick={() => handleToggleStatus(u.id)}
+                          className={`px-2.5 py-1 text-[11px] font-semibold rounded border transition-colors cursor-pointer ${
+                            u.is_active
+                              ? 'text-rose-600 border-rose-200 hover:bg-rose-50'
+                              : 'text-emerald-700 border-emerald-200 hover:bg-emerald-50'
+                          }`}
+                        >
+                          {u.is_active ? 'Nonaktifkan' : 'Aktifkan'}
+                        </button>
+                      ) : (
+                        <span className="text-[10px] text-slate-400 italic">Owner</span>
+                      )}
+                    </div>
                   </td>
                 </tr>
               );
@@ -260,6 +296,79 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({
           </tbody>
         </table>
       </div>
+
+      {/* Edit Credentials Modal */}
+      {editCredsUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+          <div className="bg-white rounded-xl max-w-sm w-full p-6 shadow-xl border border-slate-200 space-y-4">
+            <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+              <KeyRound className="w-4 h-4 text-indigo-600" />
+              <h3 className="text-sm font-bold text-slate-900">
+                Ubah Akses Login: {editCredsUser.full_name}
+              </h3>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!editPassword.trim()) {
+                  alert('Password tidak boleh kosong.');
+                  return;
+                }
+                const res = dataService.updateUserCredentials(
+                  editCredsUser.id,
+                  editUsername.trim(),
+                  editPassword.trim()
+                );
+                alert(res.message);
+                if (res.success) {
+                  setEditCredsUser(null);
+                  onRefresh();
+                }
+              }}
+              className="space-y-3 text-xs"
+            >
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Username Login</label>
+                <input
+                  type="text"
+                  required
+                  value={editUsername}
+                  onChange={(e) => setEditUsername(e.target.value)}
+                  className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-slate-900 font-mono text-xs"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Kata Sandi (Password)</label>
+                <input
+                  type="text"
+                  required
+                  value={editPassword}
+                  onChange={(e) => setEditPassword(e.target.value)}
+                  className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-slate-900 font-mono text-xs"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setEditCredsUser(null)}
+                  className="px-3.5 py-1.5 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="px-3.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white font-semibold"
+                >
+                  Simpan Akses
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Add User Modal */}
       {showAddModal && (
@@ -291,6 +400,31 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({
                   onChange={(e) => setNewEmail(e.target.value)}
                   className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-slate-900"
                 />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Username</label>
+                  <input
+                    type="text"
+                    placeholder="Contoh: sarah"
+                    value={newUsername}
+                    onChange={(e) => setNewUsername(e.target.value)}
+                    className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-slate-900 font-mono text-xs"
+                  />
+                  <span className="text-[10px] text-slate-400">Otomatis jika kosong</span>
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Password</label>
+                  <input
+                    type="text"
+                    placeholder="Minimal 6 karakter"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-slate-900 font-mono text-xs"
+                  />
+                  <span className="text-[10px] text-slate-400">Default: password123</span>
+                </div>
               </div>
 
               <div>

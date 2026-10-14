@@ -2,6 +2,8 @@ export type UserRole = 'OWNER' | 'ADMIN' | 'STAFF' | 'VIEWER';
 
 export interface UserProfile {
   id: string;
+  username?: string;
+  password?: string;
   email: string;
   full_name: string;
   role: UserRole;
@@ -11,8 +13,36 @@ export interface UserProfile {
 }
 
 export type DocumentStatus = 'Draft' | 'Diajukan' | 'Dikembalikan' | 'Terbit' | 'Dibatalkan';
-export type PaymentStatus = 'Belum Dibayar' | 'Dibayar Sebagian' | 'Lunas';
+export type PaymentStatus =
+  | 'Belum Bayar'
+  | 'Dibayar sebagian'
+  | 'Sudah di bayar'
+  | 'dibatalkan'
+  | 'Belum Dibayar'
+  | 'Dibayar Sebagian'
+  | 'Lunas'
+  | 'Dibatalkan';
 export type DueStatus = 'Normal' | 'Segera Jatuh Tempo' | 'Jatuh Tempo';
+
+export type CanonicalPaymentStatus = 'Belum Bayar' | 'Dibayar sebagian' | 'Sudah di bayar' | 'dibatalkan';
+
+export function normalizePaymentStatus(status?: string, docStatus?: string): CanonicalPaymentStatus {
+  if (docStatus === 'Dibatalkan' || status === 'dibatalkan' || status === 'Dibatalkan') {
+    return 'dibatalkan';
+  }
+  if (!status) return 'Belum Bayar';
+  const s = status.trim().toLowerCase();
+  if (s === 'lunas' || s === 'sudah di bayar' || s === 'sudah dibayar' || s === 'paid') {
+    return 'Sudah di bayar';
+  }
+  if (s === 'dibayar sebagian' || s === 'sebagian' || s === 'partial' || s === 'partially paid') {
+    return 'Dibayar sebagian';
+  }
+  if (s === 'dibatalkan' || s === 'batal' || s === 'canceled' || s === 'cancelled') {
+    return 'dibatalkan';
+  }
+  return 'Belum Bayar';
+}
 
 export type SapaanType = 'Tn.' | 'Ny.';
 
@@ -42,6 +72,10 @@ export interface InvoiceItem {
   unit: string;
   unit_price: number;
   total: number;
+  currency?: 'IDR' | 'USD';
+  unit_price_usd?: number;
+  custom_exchange_rate?: number;
+  total_usd?: number;
 }
 
 export interface PublisherSnapshot {
@@ -60,6 +94,21 @@ export interface BankSnapshot {
   account_name: string; // 'Riskha Ziaulhusna'
 }
 
+export interface BankAccount {
+  id: string;
+  bank_name: string;
+  account_number: string;
+  account_name: string;
+  is_default?: boolean;
+}
+
+export interface GeneralClause {
+  id: string;
+  title?: string;
+  content: string;
+  is_active?: boolean;
+}
+
 export interface ClientSnapshot {
   sapaan: SapaanType;
   pic_name: string;
@@ -67,6 +116,29 @@ export interface ClientSnapshot {
   billing_address: string;
   email: string;
   whatsapp: string;
+}
+
+export type AttachmentCategory =
+  | 'PO'
+  | 'BAST'
+  | 'KONTRAK'
+  | 'BUKTI_KERJA'
+  | 'FAKTUR_PAJAK'
+  | 'PENAWARAN'
+  | 'LAINNYA';
+
+export interface InvoiceAttachment {
+  id: string;
+  name: string;
+  size: number;
+  type: string;
+  category: AttachmentCategory;
+  description?: string;
+  data_url?: string;
+  drive_file_id?: string;
+  drive_web_link?: string;
+  uploaded_by_name?: string;
+  uploaded_at: string;
 }
 
 export interface InvoiceVersion {
@@ -79,9 +151,13 @@ export interface InvoiceVersion {
   client_snapshot: ClientSnapshot;
   publisher_snapshot: PublisherSnapshot;
   bank_snapshot: BankSnapshot;
+  bank_accounts_snapshot?: BankAccount[];
   logo_snapshot_url?: string;
   items: InvoiceItem[];
+  currency?: 'IDR' | 'USD';
+  custom_exchange_rate?: number;
   subtotal: number;
+  subtotal_usd?: number;
   discount_type: 'percent' | 'nominal';
   discount_value: number;
   discount_amount: number;
@@ -89,10 +165,14 @@ export interface InvoiceVersion {
   tax_rate: number;
   tax_amount: number;
   grand_total: number;
+  grand_total_usd?: number;
   terbilang: string;
   client_notes?: string;
   work_terms?: string;
   payment_terms?: string;
+  general_clauses?: GeneralClause[];
+  attachments?: InvoiceAttachment[];
+  created_by_name?: string;
   pdf_storage_path?: string;
   created_at: string;
 }
@@ -141,6 +221,7 @@ export interface Invoice {
   submission_notes?: string;
   return_notes?: string;
   payments: PaymentRecord[];
+  attachments?: InvoiceAttachment[];
   active_token?: string;
   created_by_id: string;
   created_by_name: string;
@@ -179,11 +260,15 @@ export interface AppSettings {
   bank_name: string;
   bank_account_no: string;
   bank_account_name: string;
+  bank_accounts?: BankAccount[];
+  general_clauses?: GeneralClause[];
   initial_sequence: number;
   current_sequence: number;
   default_work_terms?: string;
   default_payment_terms?: string;
   default_client_notes?: string;
+  default_currency?: 'IDR' | 'USD';
+  default_usd_rate?: number;
   updated_at: string;
 }
 
@@ -201,3 +286,23 @@ export interface AuditLog {
 }
 
 export type AuditLogEntry = AuditLog;
+
+export interface DriveFile {
+  id: string;
+  name: string;
+  mimeType: string;
+  webViewLink?: string;
+  webContentLink?: string;
+  createdTime?: string;
+  modifiedTime?: string;
+  size?: string;
+  iconLink?: string;
+  thumbnailLink?: string;
+}
+
+export interface DriveUser {
+  displayName?: string;
+  emailAddress?: string;
+  photoLink?: string;
+}
+

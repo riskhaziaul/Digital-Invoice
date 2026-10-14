@@ -79,8 +79,9 @@ export const TemplateManagementView: React.FC<TemplateManagementViewProps> = ({ 
     { key: '{GrandTotal}', desc: 'Total nilai tagihan (Rp)' },
     { key: '{PembayaranDiterima}', desc: 'Total pembayaran yang telah masuk' },
     { key: '{SisaTagihan}', desc: 'Sisa saldo tertunggak' },
-    { key: '{LinkInvoice}', desc: 'Tautan web resmi penerima' },
-    { key: '{LinkPDF}', desc: 'Tautan unduh langsung file PDF' },
+    { key: '{LampiranPDF}', desc: 'Keterangan lampiran berkas resmi PDF' },
+    { key: '{LinkInvoice}', desc: 'Keterangan lampiran berkas PDF invoice' },
+    { key: '{LinkPDF}', desc: 'Keterangan lampiran berkas PDF invoice' },
     { key: '{NamaPengirim}', desc: 'Nama pengirim / divisi penagihan' },
   ];
 
@@ -101,8 +102,9 @@ export const TemplateManagementView: React.FC<TemplateManagementViewProps> = ({ 
     .replace(/\{GrandTotal\}/g, 'Rp 15.000.000')
     .replace(/\{PembayaranDiterima\}/g, 'Rp 5.000.000')
     .replace(/\{SisaTagihan\}/g, 'Rp 10.000.000')
-    .replace(/\{LinkInvoice\}/g, 'https://invoicedigital.id/invoice/token-resmi-123')
-    .replace(/\{LinkPDF\}/g, 'https://invoicedigital.id/invoice/token-resmi-123/pdf')
+    .replace(/\{LampiranPDF\}/g, 'berkas resmi PDF (INV/DIGITAL/IX/26-0001.pdf)')
+    .replace(/\{LinkInvoice\}/g, 'berkas resmi PDF (INV/DIGITAL/IX/26-0001.pdf)')
+    .replace(/\{LinkPDF\}/g, 'berkas resmi PDF (INV/DIGITAL/IX/26-0001.pdf)')
     .replace(/\{NamaPengirim\}/g, 'Riskha Ziaulhusna (Digital & Marcomm Team)');
 
   return (

@@ -13,17 +13,27 @@ import {
   CreditCard,
   Ban,
   FileEdit,
+  FileText,
+  Send,
   ExternalLink,
   Eye,
   MessageSquare,
+  Mail,
   RefreshCw,
   CornerUpLeft,
+  Cloud,
+  Globe,
+  Paperclip,
+  DollarSign,
 } from 'lucide-react';
-import { Invoice, PaymentRecord, UserProfile } from '../types';
-import { formatRupiah, formatTanggalIndonesia } from '../lib/terbilang';
+import { Invoice, InvoiceAttachment, PaymentRecord, UserProfile } from '../types';
+import { formatRupiah, formatUSD, formatTanggalIndonesia, formatAngka, getExchangeRatesSummary } from '../lib/terbilang';
 import { generateInvoicePDF } from '../lib/pdf-generator';
-import { formatInvoiceMessage } from '../lib/message-formatter';
 import { dataService } from '../lib/data-service';
+import { uploadFileToDrive } from '../lib/google-drive';
+import { SendMessageModal } from './SendMessageModal';
+import { AttachmentManager } from './AttachmentManager';
+import { InvoiceDeliveryFormat } from '../lib/message-formatter';
 
 interface InvoiceDetailViewProps {
   invoice: Invoice;
@@ -62,11 +72,13 @@ export const InvoiceDetailView: React.FC<InvoiceDetailViewProps> = ({
   const [reversalTarget, setReversalTarget] = useState<PaymentRecord | null>(null);
   const [reversalReason, setReversalReason] = useState('');
 
-  // Share Message Modal
-  const [showShareModal, setShowShareModal] = useState(false);
-  const [selectedTemplateType, setSelectedTemplateType] = useState<string>('pengiriman_invoice');
-  const [oneTimeMessageText, setOneTimeMessageText] = useState('');
-  const [copiedMessage, setCopiedMessage] = useState(false);
+  // Send Message & Email Notification Modal
+  const [sendModalChannel, setSendModalChannel] = useState<'whatsapp' | 'email' | null>(null);
+  const [sendModalFormat, setSendModalFormat] = useState<InvoiceDeliveryFormat>('both');
+
+  // Google Drive state
+  const [isSavingToDrive, setIsSavingToDrive] = useState(false);
+  const [driveSuccessLink, setDriveSuccessLink] = useState<string | null>(null);
 
   const v = invoice.current_version;
   const client = v.client_snapshot;
@@ -78,20 +90,28 @@ export const InvoiceDetailView: React.FC<InvoiceDetailViewProps> = ({
   const isOwnerAdmin = currentUser.role === 'OWNER' || currentUser.role === 'ADMIN';
   const isStaff = currentUser.role === 'STAFF';
 
+  const handleAttachmentsChange = (updated: InvoiceAttachment[]) => {
+    dataService.updateInvoiceAttachments(invoice.id, updated);
+    onRefresh();
+  };
+
   const recipientUrl = invoice.active_token
     ? `${window.location.origin}/invoice/${invoice.active_token}`
-    : '';
+    : `${window.location.origin}/invoice/${invoice.id}`;
 
   const recipientPDFUrl = invoice.active_token
     ? `${window.location.origin}/invoice/${invoice.active_token}/pdf`
-    : '';
+    : `${window.location.origin}/invoice/${invoice.id}/pdf`;
 
   // Download PDF directly
   const handleDownloadPDF = async () => {
     try {
+      const atts = v.attachments || invoice.attachments || [];
       const pdfBytes = await generateInvoicePDF({
         invoiceNumber: invoice.invoice_number || 'DRAFT',
         version: v,
+        attachments: atts,
+        createdByName: invoice.created_by_name || v.created_by_name,
       });
       const blob = new Blob([pdfBytes as any], { type: 'application/pdf' });
       const url = URL.createObjectURL(blob);
@@ -107,6 +127,47 @@ export const InvoiceDetailView: React.FC<InvoiceDetailViewProps> = ({
     } catch (err) {
       console.error('Download error:', err);
       alert('Gagal mengunduh PDF.');
+    }
+  };
+
+  // Save PDF directly to Google Drive
+  const handleSaveToDrive = async () => {
+    setIsSavingToDrive(true);
+    setDriveSuccessLink(null);
+    try {
+      const atts = v.attachments || invoice.attachments || [];
+      const pdfBytes = await generateInvoicePDF({
+        invoiceNumber: invoice.invoice_number || 'DRAFT',
+        version: v,
+        attachments: atts,
+        createdByName: invoice.created_by_name || v.created_by_name,
+      });
+      const safeNumber = (invoice.invoice_number || 'DRAFT').replace(/[^a-zA-Z0-9]/g, '_');
+      const safeCompany = (client.company_name || 'Client').replace(/[^a-zA-Z0-9]/g, '_');
+      const fileName = `Invoice_${safeNumber}_${safeCompany}_v${invoice.revision_number}.pdf`;
+
+      const uploaded = await uploadFileToDrive({
+        name: fileName,
+        mimeType: 'application/pdf',
+        content: pdfBytes,
+        description: `Invoice ${invoice.invoice_number} untuk ${client.company_name}. Total: Rp ${v.grand_total.toLocaleString('id-ID')}`,
+      });
+
+      dataService.recordAuditLog(
+        'INVOICE',
+        invoice.id,
+        `Menyimpan salinan PDF ${fileName} ke Google Drive`
+      );
+
+      if (uploaded.webViewLink) {
+        setDriveSuccessLink(uploaded.webViewLink);
+      }
+      alert(`Berhasil menyimpan berkas "${fileName}" ke folder "Invoice Digital" di Google Drive!`);
+    } catch (err: any) {
+      console.error('Google Drive save error:', err);
+      alert(err.message || 'Gagal menyimpan ke Google Drive. Pastikan popup login Google tidak diblokir.');
+    } finally {
+      setIsSavingToDrive(false);
     }
   };
 
@@ -126,15 +187,28 @@ export const InvoiceDetailView: React.FC<InvoiceDetailViewProps> = ({
 
   // Publish
   const handlePublish = async () => {
-    if (!isOwnerAdmin) return;
+    if (!isOwnerAdmin) {
+      alert('Hanya Owner atau Admin yang berwenang menerbitkan invoice.');
+      return;
+    }
     setIsProcessing(true);
     try {
       const res = await dataService.publishInvoice(invoice.id);
       alert(res.message);
       if (res.success) onRefresh();
+    } catch (err: any) {
+      console.error('Error saat menerbitkan invoice:', err);
+      alert('Terjadi kesalahan saat memproses penerbitan: ' + (err?.message || 'Error tidak diketahui'));
     } finally {
       setIsProcessing(false);
     }
+  };
+
+  // Submit Draft for Approval (Staff)
+  const handleSubmitForApproval = () => {
+    const res = dataService.submitDraftForApproval(invoice.id);
+    alert(res.message);
+    if (res.success) onRefresh();
   };
 
   // Return
@@ -235,57 +309,10 @@ export const InvoiceDetailView: React.FC<InvoiceDetailViewProps> = ({
     }
   };
 
-  // Open Share Modal & Prepare Template
-  const handleOpenShareModal = () => {
-    const templates = dataService.getTemplates();
-    const tpl = templates.find((t) => t.type === selectedTemplateType) || templates[0];
-    if (tpl) {
-      const formatted = formatInvoiceMessage(tpl.body, invoice, currentUser.full_name);
-      setOneTimeMessageText(formatted.text);
-    }
-    setShowShareModal(true);
-  };
-
-  const handleTemplateChange = (type: string) => {
-    setSelectedTemplateType(type);
-    const templates = dataService.getTemplates();
-    const tpl = templates.find((t) => t.type === type) || templates[0];
-    if (tpl) {
-      const formatted = formatInvoiceMessage(tpl.body, invoice, currentUser.full_name);
-      setOneTimeMessageText(formatted.text);
-    }
-  };
-
-  // Check unresolved placeholders in one-time edited message
-  const unresolvedMatches = oneTimeMessageText.match(/\{[a-zA-Z0-9_]+\}/g) || [];
-  const hasUnresolved = unresolvedMatches.length > 0;
-
-  const handleCopyOneTimeMessage = () => {
-    if (hasUnresolved) {
-      alert(`Pesan masih mengandung placeholder yang belum terisi: ${unresolvedMatches.join(', ')}`);
-      return;
-    }
-    navigator.clipboard.writeText(oneTimeMessageText);
-    setCopiedMessage(true);
-    setTimeout(() => setCopiedMessage(false), 2000);
-  };
-
-  // WhatsApp open
-  const handleOpenWhatsApp = () => {
-    if (hasUnresolved) {
-      alert(`Pesan masih mengandung placeholder yang belum terisi: ${unresolvedMatches.join(', ')}`);
-      return;
-    }
-    if (!client.whatsapp) {
-      alert('Nomor WhatsApp klien belum diisi.');
-      return;
-    }
-    let cleanPhone = client.whatsapp.replace(/[^0-9]/g, '');
-    if (cleanPhone.startsWith('0')) cleanPhone = '62' + cleanPhone.slice(1);
-    else if (cleanPhone.startsWith('8')) cleanPhone = '62' + cleanPhone;
-
-    const waUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(oneTimeMessageText)}`;
-    window.open(waUrl, '_blank');
+  // Open Send Message / Notification Modal
+  const handleOpenSendModal = (channel: 'whatsapp' | 'email' = 'whatsapp', format: InvoiceDeliveryFormat = 'both') => {
+    setSendModalChannel(channel);
+    setSendModalFormat(format);
   };
 
   return (
@@ -323,10 +350,34 @@ export const InvoiceDetailView: React.FC<InvoiceDetailViewProps> = ({
           {(invoice.status === 'Draft' || invoice.status === 'Dikembalikan') && (
             <button
               onClick={() => onEditDraft(invoice.id)}
-              className="px-3 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs"
+              className="px-3 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs cursor-pointer"
             >
               <FileEdit className="w-4 h-4" />
               Edit Draft
+            </button>
+          )}
+
+          {/* Draft: Owner/Admin can Publish directly */}
+          {invoice.status === 'Draft' && isOwnerAdmin && (
+            <button
+              disabled={isProcessing}
+              onClick={handlePublish}
+              className="px-3.5 py-2 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+            >
+              <CheckCircle2 className="w-4 h-4" />
+              {isProcessing ? 'Menerbitkan...' : 'Terbitkan Invoice'}
+            </button>
+          )}
+
+          {/* Draft: Staff can submit for approval */}
+          {invoice.status === 'Draft' && isStaff && (
+            <button
+              disabled={isProcessing}
+              onClick={handleSubmitForApproval}
+              className="px-3.5 py-2 rounded-lg bg-blue-700 hover:bg-blue-800 text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+            >
+              <Send className="w-4 h-4" />
+              Ajukan untuk Persetujuan
             </button>
           )}
 
@@ -336,14 +387,14 @@ export const InvoiceDetailView: React.FC<InvoiceDetailViewProps> = ({
               <button
                 disabled={isProcessing}
                 onClick={handlePublish}
-                className="px-3.5 py-2 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-colors"
+                className="px-3.5 py-2 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
               >
                 <CheckCircle2 className="w-4 h-4" />
                 {isProcessing ? 'Menerbitkan...' : 'Setujui & Terbitkan'}
               </button>
               <button
                 onClick={() => setShowReturnModal(true)}
-                className="px-3 py-2 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-colors"
+                className="px-3 py-2 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
               >
                 <CornerUpLeft className="w-4 h-4" />
                 Kembalikan
@@ -374,11 +425,43 @@ export const InvoiceDetailView: React.FC<InvoiceDetailViewProps> = ({
               </button>
 
               <button
-                onClick={handleOpenShareModal}
-                className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs"
+                onClick={handleSaveToDrive}
+                disabled={isSavingToDrive}
+                className="px-3 py-2 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-colors"
+                title="Simpan salinan resmi PDF ke Google Drive"
+              >
+                <Cloud className={`w-4 h-4 text-blue-600 ${isSavingToDrive ? 'animate-pulse' : ''}`} />
+                {isSavingToDrive ? 'Menyimpan...' : 'Simpan ke Drive'}
+              </button>
+
+              {driveSuccessLink && (
+                <a
+                  href={driveSuccessLink}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="px-3 py-2 rounded-lg bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-colors"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  Lihat di Drive
+                </a>
+              )}
+
+              <button
+                onClick={() => handleOpenSendModal('whatsapp')}
+                className="px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+                title="Kirim pesan penagihan langsung via WhatsApp"
               >
                 <MessageSquare className="w-4 h-4" />
-                Bagikan Pesan
+                Kirim WhatsApp
+              </button>
+
+              <button
+                onClick={() => handleOpenSendModal('email')}
+                className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+                title="Kirim email notifikasi invoice ke klien"
+              >
+                <Mail className="w-4 h-4" />
+                Kirim Email
               </button>
 
               {isOwnerAdmin && (
@@ -411,10 +494,11 @@ export const InvoiceDetailView: React.FC<InvoiceDetailViewProps> = ({
           {currentUser.role !== 'VIEWER' && (
             <button
               onClick={() => onDuplicate(invoice.id)}
-              className="px-3 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 text-xs font-semibold flex items-center gap-1.5"
+              className="px-3 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+              title="Duplikat dokumen ini dengan nomor invoice baru dan tanggal bulan berjalan"
             >
               <Copy className="w-4 h-4 text-slate-500" />
-              Duplikasi
+              Duplikasi Invoice
             </button>
           )}
         </div>
@@ -431,91 +515,177 @@ export const InvoiceDetailView: React.FC<InvoiceDetailViewProps> = ({
         </div>
       )}
 
-      {/* Public Share Links Card (Only if Terbit and Token Active) */}
-      {invoice.status === 'Terbit' && invoice.active_token && (
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Link className="w-4 h-4 text-indigo-600" />
-              <h3 className="text-xs font-bold text-slate-900">Tautan Akses Klien Resmi</h3>
+      {/* Official PDF & Web Link Dispatch Card (Only if Terbit) */}
+      {invoice.status === 'Terbit' && (
+        <div className="bg-white p-5 rounded-xl border border-indigo-200 shadow-xs space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-indigo-600 text-white flex items-center justify-center shadow-xs">
+                <FileText className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="text-xs font-bold text-slate-900">Pilihan Pengiriman Tagihan (Link & PDF)</h3>
+                <p className="text-[11px] text-slate-500">Kirimkan invoice ke klien dalam format Tautan Online, Berkas PDF Resmi, atau Lengkap (Keduanya)</p>
+              </div>
             </div>
-            {isOwnerAdmin && (
-              <div className="flex items-center gap-2">
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => handleOpenSendModal('whatsapp', 'both')}
+                className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+                title="Kirim via WhatsApp (Lengkap Link + PDF)"
+              >
+                <MessageSquare className="w-3.5 h-3.5" />
+                <span>Kirim via WA</span>
+              </button>
+              <button
+                onClick={() => handleOpenSendModal('email', 'both')}
+                className="px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+                title="Kirim via Email (Lengkap Link + PDF)"
+              >
+                <Mail className="w-3.5 h-3.5" />
+                <span>Kirim via Email</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Dual Format Grid: Link vs PDF */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {/* Format 1: Tautan Web Interaktif */}
+            <div className="p-3.5 bg-blue-50/50 border border-blue-200 rounded-xl space-y-2.5 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-blue-950 flex items-center gap-1.5">
+                    <Globe className="w-4 h-4 text-blue-600 shrink-0" />
+                    <span>Format 1: Tautan Web (Link Online)</span>
+                  </span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 font-semibold">
+                    Interaktif
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-600 mt-1">
+                  Klien membuka portal web untuk rincian interaktif, konfirmasi pembayaran, dan unduhan mandiri.
+                </p>
+                {recipientUrl && (
+                  <div className="mt-2 text-[10px] font-mono text-blue-700 bg-white p-1.5 rounded border border-blue-200 truncate select-all">
+                    {recipientUrl}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center gap-1.5 pt-2 border-t border-blue-200/70 flex-wrap">
+                <button
+                  onClick={handleCopyLink}
+                  className="px-2.5 py-1 rounded bg-white hover:bg-slate-100 text-slate-700 text-[11px] font-semibold border border-slate-200 flex items-center gap-1 transition-colors cursor-pointer"
+                  title="Salin tautan online invoice"
+                >
+                  <Copy className="w-3 h-3" />
+                  <span>{copiedLink ? 'Tersalin' : 'Salin Link'}</span>
+                </button>
+                {recipientUrl && (
+                  <a
+                    href={recipientUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-2.5 py-1 rounded bg-white hover:bg-slate-100 text-blue-700 text-[11px] font-semibold border border-blue-200 flex items-center gap-1 transition-colors"
+                    title="Buka portal penerima di tab baru"
+                  >
+                    <ExternalLink className="w-3 h-3" />
+                    <span>Buka Portal</span>
+                  </a>
+                )}
+                <button
+                  onClick={() => handleOpenSendModal('whatsapp', 'link')}
+                  className="ml-auto px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-semibold flex items-center gap-1 transition-colors cursor-pointer shadow-xs"
+                  title="Kirim hanya link via WhatsApp"
+                >
+                  <MessageSquare className="w-3 h-3" />
+                  <span>Kirim Link via WA</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Format 2: Dokumen Berkas PDF Resmi */}
+            <div className="p-3.5 bg-indigo-50/50 border border-indigo-200 rounded-xl space-y-2.5 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+                    <FileText className="w-4 h-4 text-indigo-600 shrink-0" />
+                    <span>Format 2: Berkas Lampiran PDF</span>
+                  </span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 font-semibold">
+                    Dokumen Resmi
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-600 mt-1">
+                  Berkas PDF resmi untuk dilampirkan langsung ke chat WhatsApp atau Email tanpa kendala akses link.
+                </p>
+                <div className="mt-2 text-[10px] font-mono text-slate-700 bg-white p-1.5 rounded border border-indigo-200 truncate">
+                  {`Invoice_${(invoice.invoice_number || 'DRAFT').replace(/[^a-zA-Z0-9_-]/g, '_')}.pdf`}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1.5 pt-2 border-t border-indigo-200/70 flex-wrap">
+                <button
+                  onClick={handleDownloadPDF}
+                  className="px-2.5 py-1 rounded bg-white hover:bg-slate-100 text-indigo-700 text-[11px] font-semibold border border-indigo-200 flex items-center gap-1 transition-colors cursor-pointer"
+                  title="Unduh berkas PDF resmi ke perangkat Anda"
+                >
+                  <Download className="w-3 h-3" />
+                  <span>Unduh PDF</span>
+                </button>
+                <button
+                  onClick={() => handleOpenSendModal('whatsapp', 'pdf')}
+                  className="ml-auto px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-semibold flex items-center gap-1 transition-colors cursor-pointer shadow-xs"
+                  title="Kirim berkas PDF via WhatsApp"
+                >
+                  <MessageSquare className="w-3 h-3" />
+                  <span>Kirim PDF via WA</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Client Contacts Bar */}
+          <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-semibold text-slate-700">Tujuan Kontak:</span>
+              <span className="flex items-center gap-1.5 bg-slate-50 px-2.5 py-1 rounded-md border border-slate-200">
+                <span className="text-[10px] text-slate-400 uppercase font-bold">WhatsApp:</span>
+                <span className="font-mono text-slate-800 font-medium">{client.whatsapp || '(Belum diisi)'}</span>
+              </span>
+              <span className="flex items-center gap-1.5 bg-slate-50 px-2.5 py-1 rounded-md border border-slate-200">
+                <span className="text-[10px] text-slate-400 uppercase font-bold">Email:</span>
+                <span className="font-mono text-slate-800 font-medium">{client.email || '(Belum diisi)'}</span>
+              </span>
+            </div>
+
+            {isOwnerAdmin && invoice.active_token && (
+              <div className="flex items-center gap-2 text-[11px]">
+                <button
+                  onClick={handleCopyPDFLink}
+                  className="text-indigo-600 hover:text-indigo-800 font-medium flex items-center gap-1"
+                  title="Salin Tautan PDF"
+                >
+                  <Copy className="w-3 h-3" />
+                  <span>{copiedPDFLink ? 'Tersalin' : 'Salin Tautan PDF'}</span>
+                </button>
+                <span className="text-slate-300">|</span>
                 <button
                   onClick={handleRegenerateToken}
-                  className="text-[11px] text-indigo-600 hover:text-indigo-800 font-semibold"
+                  className="text-slate-500 hover:text-slate-700 font-medium"
                 >
-                  Buat Ulang Link
+                  Perbarui Token
                 </button>
                 <span className="text-slate-300">|</span>
                 <button
                   onClick={handleRevokeToken}
-                  className="text-[11px] text-rose-600 hover:text-rose-800 font-semibold"
+                  className="text-rose-600 hover:text-rose-800 font-medium"
                 >
                   Cabut Akses
                 </button>
               </div>
             )}
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {/* Invoice Link */}
-            <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg flex items-center justify-between">
-              <div className="truncate mr-2">
-                <span className="text-[10px] text-slate-400 font-bold block uppercase">
-                  Halaman Invoice
-                </span>
-                <span className="text-xs text-slate-800 font-mono truncate block">
-                  {recipientUrl}
-                </span>
-              </div>
-              <div className="flex items-center gap-1.5 shrink-0">
-                <button
-                  onClick={handleCopyLink}
-                  className="p-1.5 rounded-md bg-white border border-slate-200 text-slate-700 hover:bg-slate-100"
-                  title="Salin Link"
-                >
-                  {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                </button>
-                <a
-                  href={recipientUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="p-1.5 rounded-md bg-white border border-slate-200 text-slate-700 hover:bg-slate-100"
-                  title="Buka Tab Baru"
-                >
-                  <ExternalLink className="w-3.5 h-3.5" />
-                </a>
-              </div>
-            </div>
-
-            {/* Direct PDF Link */}
-            <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg flex items-center justify-between">
-              <div className="truncate mr-2">
-                <span className="text-[10px] text-slate-400 font-bold block uppercase">
-                  Tautan Langsung PDF
-                </span>
-                <span className="text-xs text-slate-800 font-mono truncate block">
-                  {recipientPDFUrl}
-                </span>
-              </div>
-              <div className="flex items-center gap-1.5 shrink-0">
-                <button
-                  onClick={handleCopyPDFLink}
-                  className="p-1.5 rounded-md bg-white border border-slate-200 text-slate-700 hover:bg-slate-100"
-                  title="Salin Link PDF"
-                >
-                  {copiedPDFLink ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                </button>
-                <button
-                  onClick={handleDownloadPDF}
-                  className="p-1.5 rounded-md bg-white border border-slate-200 text-slate-700 hover:bg-slate-100"
-                  title="Unduh Langsung"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            </div>
           </div>
         </div>
       )}
@@ -566,6 +736,51 @@ export const InvoiceDetailView: React.FC<InvoiceDetailViewProps> = ({
                   <td className="text-slate-400 pr-2">Periode:</td>
                   <td className="font-medium">{v.period || '-'}</td>
                 </tr>
+                <tr>
+                  <td className="text-slate-400 pr-2 pt-1.5 align-top">Ket. Pembayaran:</td>
+                  <td className="pt-1.5">
+                    {isOwnerAdmin ? (
+                      <select
+                        value={invoice.payment_status || 'Belum Bayar'}
+                        onChange={(e) => {
+                          const val = e.target.value as any;
+                          const res = dataService.updateInvoicePaymentStatus(invoice.id, val);
+                          alert(res.message);
+                          if (res.success) onRefresh();
+                        }}
+                        className={`text-xs font-bold py-0.5 px-2 rounded border cursor-pointer ${
+                          invoice.payment_status === 'Sudah di bayar'
+                            ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                            : invoice.payment_status === 'Dibayar sebagian'
+                            ? 'bg-blue-50 text-blue-800 border-blue-300'
+                            : invoice.payment_status === 'dibatalkan'
+                            ? 'bg-rose-50 text-rose-800 border-rose-300'
+                            : 'bg-amber-50 text-amber-900 border-amber-300'
+                        }`}
+                        title="Klik untuk mengubah keterangan pembayaran invoice"
+                      >
+                        <option value="Belum Bayar">Belum Bayar</option>
+                        <option value="Dibayar sebagian">Dibayar sebagian</option>
+                        <option value="Sudah di bayar">Sudah di bayar</option>
+                        <option value="dibatalkan">dibatalkan</option>
+                      </select>
+                    ) : (
+                      <span
+                        className={`inline-block px-2 py-0.5 rounded text-[11px] font-bold ${
+                          invoice.payment_status === 'Sudah di bayar'
+                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                            : invoice.payment_status === 'Dibayar sebagian'
+                            ? 'bg-blue-100 text-blue-800 border border-blue-300'
+                            : invoice.payment_status === 'dibatalkan'
+                            ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                            : 'bg-amber-100 text-amber-900 border border-amber-300'
+                        }`}
+                      >
+                        {invoice.payment_status || 'Belum Bayar'}
+                      </span>
+                    )}
+                  </td>
+                </tr>
               </tbody>
             </table>
           </div>
@@ -608,17 +823,61 @@ export const InvoiceDetailView: React.FC<InvoiceDetailViewProps> = ({
                 <tr key={item.id || idx}>
                   <td className="py-2.5 px-3 text-center text-slate-400">{idx + 1}</td>
                   <td className="py-2.5 px-3 font-medium whitespace-pre-line">
-                    {item.description}
+                    <span>{item.description}</span>
+                    {item.currency === 'USD' && (
+                      <div className="mt-1 flex items-center gap-1.5 text-[10px] text-emerald-800 font-semibold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 w-fit">
+                        <DollarSign className="w-3 h-3 text-emerald-600" />
+                        <span>USD (Valas) • Kurs: Rp {formatAngka(item.custom_exchange_rate || v.custom_exchange_rate || 16250)} / $1</span>
+                      </div>
+                    )}
                   </td>
                   <td className="py-2.5 px-3 text-center">{item.quantity}</td>
                   <td className="py-2.5 px-3">{item.unit || '-'}</td>
-                  <td className="py-2.5 px-3 text-right">{formatRupiah(item.unit_price)}</td>
-                  <td className="py-2.5 px-3 text-right font-bold">{formatRupiah(item.total)}</td>
+                  <td className="py-2.5 px-3 text-right">
+                    {item.currency === 'USD' ? (
+                      <div>
+                        <span className="font-bold text-slate-900">{formatUSD(item.unit_price_usd || 0)}</span>
+                        <span className="text-[10px] text-slate-500 block">({formatRupiah(item.unit_price)})</span>
+                      </div>
+                    ) : (
+                      formatRupiah(item.unit_price)
+                    )}
+                  </td>
+                  <td className="py-2.5 px-3 text-right font-bold">
+                    {item.currency === 'USD' ? (
+                      <div>
+                        <span className="text-slate-900">{formatRupiah(item.total)}</span>
+                        <span className="text-[10px] text-emerald-700 font-semibold block">{formatUSD(item.total_usd || 0)}</span>
+                      </div>
+                    ) : (
+                      formatRupiah(item.total)
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+
+        {/* Valas Info Callout if USD items exist */}
+        {v.items.some((i) => i.currency === 'USD' || (i.unit_price_usd && i.unit_price_usd > 0)) && (
+          <div className="p-3 bg-emerald-50/80 border border-emerald-200 rounded-lg text-xs text-emerald-900 flex items-start gap-2.5">
+            <DollarSign className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+            <div>
+              <span className="font-bold">Informasi Kurs Valuta Asing (USD):</span>
+              <p className="text-[11px] text-emerald-800 mt-0.5">
+                Dokumen ini memuat komponen dengan denominasi US Dollar (USD) sebesar{' '}
+                <strong>
+                  {formatUSD(
+                    v.items.reduce((s, i) => s + (i.currency === 'USD' ? (Number(i.total_usd) || 0) : 0), 0)
+                  )}
+                </strong>
+                . Nilai konversi resmi ke Rupiah dihitung berdasarkan kurs custom yang disepakati (Kurs acuan:{' '}
+                {getExchangeRatesSummary(v.items, v.custom_exchange_rate)}).
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Totals */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 items-start pt-2">
@@ -657,6 +916,43 @@ export const InvoiceDetailView: React.FC<InvoiceDetailViewProps> = ({
           </div>
         </div>
 
+        {/* General Clauses (Klausul Umum Utuh) */}
+        {(() => {
+          let clauses = v.general_clauses || [];
+          if (clauses.length === 0 && v.client_notes && v.client_notes.includes('Item tambahan akan dikenakan biaya tambahan')) {
+            clauses = [
+              {
+                id: 'clause-default-1',
+                title: 'General Clause',
+                content: '1. Item tambahan akan dikenakan biaya tambahan\n2. Biaya Tambahan akan ditagih langsung, di luar tagihan utama',
+                is_active: true,
+              },
+            ];
+          }
+          const activeClauses = clauses.filter((c) => c.is_active !== false);
+          if (activeClauses.length === 0) return null;
+
+          return (
+            <div className="pt-4 border-t border-slate-200 text-xs">
+              <span className="text-[11px] font-bold text-slate-900 uppercase tracking-wider block mb-2">
+                Klausul Umum / General Clauses (Syarat & Ketentuan):
+              </span>
+              <div className="bg-slate-50/80 p-3.5 rounded-lg border border-slate-200 space-y-2">
+                {activeClauses.map((clause, cIdx) => (
+                  <div key={clause.id || cIdx} className="text-slate-800">
+                    <p className="font-bold text-slate-900">
+                      {cIdx + 1}. {clause.title || `Klausul ${cIdx + 1}`}:
+                    </p>
+                    <p className="text-slate-700 whitespace-pre-line pl-4 mt-0.5 leading-relaxed">
+                      {clause.content}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
+
         {/* Bank & Notes */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 pt-4 border-t border-slate-200 text-xs">
           <div>
@@ -676,21 +972,106 @@ export const InvoiceDetailView: React.FC<InvoiceDetailViewProps> = ({
           </div>
 
           <div>
-            {v.client_notes && (
-              <div>
-                <span className="text-[11px] font-bold text-slate-900 uppercase tracking-wider block mb-1">
-                  Catatan:
-                </span>
-                <p className="text-slate-600 whitespace-pre-line">{v.client_notes}</p>
-              </div>
-            )}
-            <div className="mt-4 text-right sm:text-left">
-              <p className="text-slate-500">Hormat Kami,</p>
-              <p className="font-bold text-slate-900 mt-6">{v.publisher_snapshot.name}</p>
+            {v.client_notes &&
+              !v.client_notes.includes('Item tambahan akan dikenakan biaya tambahan') &&
+              v.client_notes.trim().toLowerCase() !== 'general clause' && (
+                <div>
+                  <span className="text-[11px] font-bold text-slate-900 uppercase tracking-wider block mb-1">
+                    Catatan:
+                  </span>
+                  <p className="text-slate-600 whitespace-pre-line leading-relaxed">{v.client_notes}</p>
+                </div>
+              )}
+            <div className="mt-4 text-right sm:text-left space-y-1">
+              <p className="text-slate-500 font-medium">Hormat Kami,</p>
+              <div className="h-12" />
+              <p className="font-bold text-slate-900 border-b border-slate-300 pb-0.5 inline-block min-w-36">
+                {(invoice.created_by_name || v.created_by_name || 'Riskha Ziaulhusna').replace(/\s*\((Owner|Admin|Staff|Viewer)\)/gi, '').trim()}
+              </p>
             </div>
           </div>
         </div>
+
+        {/* Lampiran Dokumen di Invoice */}
+        <div className="pt-4 border-t border-slate-200 text-xs">
+          <div className="flex items-center justify-between mb-2.5">
+            <span className="text-[11px] font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+              <Paperclip className="w-3.5 h-3.5 text-blue-600" />
+              Lampiran Dokumen Resmi:
+            </span>
+            <span className="text-[11px] text-slate-500 font-medium">
+              {(v.attachments || invoice.attachments || []).length > 0
+                ? `${(v.attachments || invoice.attachments || []).length} berkas terlampir`
+                : 'Tidak ada lampiran'}
+            </span>
+          </div>
+
+          {(v.attachments || invoice.attachments || []).length > 0 ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+              {(v.attachments || invoice.attachments || []).map((att, idx) => (
+                <div
+                  key={att.id || idx}
+                  className="flex items-center justify-between p-2.5 rounded-lg bg-slate-50 border border-slate-200 text-xs hover:bg-slate-100 transition-colors"
+                >
+                  <div className="flex items-center gap-2 min-w-0 pr-2">
+                    <FileText className="w-4 h-4 text-blue-600 shrink-0" />
+                    <div className="min-w-0">
+                      <p className="font-semibold text-slate-800 truncate text-[11px]" title={att.name}>
+                        {att.name}
+                      </p>
+                      <p className="text-[10px] text-slate-500">
+                        <span className="font-bold text-blue-700">[{att.category}]</span>{' '}
+                        {att.size ? `• ${(att.size / 1024).toFixed(0)} KB` : ''}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {att.data_url && (
+                      <a
+                        href={att.data_url}
+                        download={att.name}
+                        className="p-1 rounded text-slate-600 hover:text-slate-900 hover:bg-white transition-colors"
+                        title="Unduh Lampiran"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                      </a>
+                    )}
+                    {att.drive_web_link && (
+                      <a
+                        href={att.drive_web_link}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="p-1 rounded text-blue-600 hover:text-blue-800 hover:bg-white transition-colors"
+                        title="Buka di Google Drive"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                      </a>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-slate-400 italic text-[11px]">
+              Tidak ada berkas lampiran pendukung yang disertakan pada invoice ini.
+            </p>
+          )}
+        </div>
       </div>
+
+      {/* Lampiran Dokumen Pendukung (Attachments) */}
+      <AttachmentManager
+        title="Lampiran Dokumen Pendukung (Attachments)"
+        subtitle="Dokumen resmi pendukung invoice: PO / Surat Pesanan, BAST, SPK/Kontrak, Bukti Pekerjaan, dan Faktur Pajak"
+        attachments={v.attachments || invoice.attachments || []}
+        onChange={handleAttachmentsChange}
+        readOnly={currentUser.role === 'VIEWER'}
+        canUpload={currentUser.role !== 'VIEWER'}
+        canDelete={currentUser.role !== 'VIEWER'}
+        currentUserName={currentUser.full_name}
+        invoiceNumber={invoice.invoice_number || 'INVOICE'}
+        showGoogleDriveSync={true}
+      />
 
       {/* Ringkasan Pembayaran & Riwayat Transaksi */}
       <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-xs space-y-4">
@@ -936,104 +1317,16 @@ export const InvoiceDetailView: React.FC<InvoiceDetailViewProps> = ({
         </div>
       )}
 
-      {/* Share Message & WhatsApp Modal */}
-      {showShareModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
-          <div className="bg-white rounded-xl max-w-xl w-full p-6 shadow-xl border border-slate-200 space-y-4 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div className="flex items-center gap-2">
-                <MessageSquare className="w-5 h-5 text-indigo-600" />
-                <h3 className="text-base font-bold text-slate-900">Kirim & Bagikan Pesan</h3>
-              </div>
-              <button
-                onClick={() => setShowShareModal(false)}
-                className="text-slate-400 hover:text-slate-700 text-sm font-bold"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Pilih Jenis Template:
-                </label>
-                <select
-                  value={selectedTemplateType}
-                  onChange={(e) => handleTemplateChange(e.target.value)}
-                  className="w-full text-xs p-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-800"
-                >
-                  <option value="pengiriman_invoice">Pengiriman Invoice Standar</option>
-                  <option value="pengingat_sebelum_jatuh_tempo">Pengingat Sebelum Jatuh Tempo</option>
-                  <option value="pengingat_setelah_jatuh_tempo">Pengingat Setelah Jatuh Tempo</option>
-                  <option value="konfirmasi_pembayaran">Konfirmasi Pembayaran Diterima</option>
-                  <option value="pengiriman_revisi">Pengiriman Revisi Resmi</option>
-                </select>
-              </div>
-
-              <div>
-                <div className="flex justify-between items-center mb-1">
-                  <label className="text-xs font-semibold text-slate-700">
-                    Isi Pesan (Dapat Diedit Sekali Kirim):
-                  </label>
-                  <span className="text-[11px] text-slate-400">
-                    Pengeditan di sini tidak merubah template utama
-                  </span>
-                </div>
-                <textarea
-                  rows={6}
-                  value={oneTimeMessageText}
-                  onChange={(e) => setOneTimeMessageText(e.target.value)}
-                  className="w-full text-xs p-3 bg-slate-50 border border-slate-200 rounded-lg font-sans leading-relaxed focus:outline-none focus:ring-1 focus:ring-slate-900"
-                />
-              </div>
-
-              {hasUnresolved && (
-                <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 flex items-start gap-2">
-                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                  <div>
-                    <span className="font-bold">Perhatian: </span>
-                    Pesan masih mengandung placeholder yang belum terisi:{' '}
-                    <span className="font-mono">{unresolvedMatches.join(', ')}</span>. Harap lengkapi
-                    sebelum menyalin atau mengirim.
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-slate-100">
-              <span className="text-[11px] text-slate-500">
-                Penerima WhatsApp: <span className="font-bold">{client.whatsapp || 'Belum diisi'}</span>
-              </span>
-
-              <div className="flex items-center gap-2 w-full sm:w-auto">
-                <button
-                  type="button"
-                  disabled={hasUnresolved}
-                  onClick={handleCopyOneTimeMessage}
-                  className="w-full sm:w-auto px-4 py-2 rounded-lg border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold flex items-center justify-center gap-1.5 disabled:opacity-40"
-                >
-                  {copiedMessage ? (
-                    <Check className="w-4 h-4 text-emerald-600" />
-                  ) : (
-                    <Copy className="w-4 h-4" />
-                  )}
-                  {copiedMessage ? 'Tersalin!' : 'Salin Pesan'}
-                </button>
-
-                <button
-                  type="button"
-                  disabled={hasUnresolved || !client.whatsapp}
-                  onClick={handleOpenWhatsApp}
-                  className="w-full sm:w-auto px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center justify-center gap-1.5 disabled:opacity-40 shadow-xs"
-                >
-                  <Share2 className="w-4 h-4" />
-                  Buka WhatsApp
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+      {/* Send Message & Email Notification Modal */}
+      {sendModalChannel && (
+        <SendMessageModal
+          invoice={invoice}
+          currentUser={currentUser}
+          initialChannel={sendModalChannel}
+          initialFormat={sendModalFormat}
+          onClose={() => setSendModalChannel(null)}
+          onSuccess={() => onRefresh()}
+        />
       )}
     </div>
   );

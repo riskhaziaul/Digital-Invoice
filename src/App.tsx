@@ -12,18 +12,42 @@ import { SettingsView } from './components/SettingsView';
 import { AuditLogView } from './components/AuditLogView';
 import { SetupGuideModal } from './components/SetupGuideModal';
 import { RecipientInvoiceView } from './components/RecipientInvoiceView';
+import { GoogleDriveView } from './components/GoogleDriveView';
+import { LoginView } from './components/LoginView';
 import { dataService } from './lib/data-service';
 import { isSupabaseConfigured } from './lib/supabase';
 import { Invoice, UserProfile } from './types';
 
 export default function App() {
-  // Check for public recipient route: /invoice/:token
+  // Check for public recipient route: /invoice/:token, #/invoice/:token, or ?token=:token
   const pathname = window.location.pathname;
-  const recipientMatch = pathname.match(/^\/invoice\/([a-zA-Z0-9_-]+)/);
+  const hash = window.location.hash;
+  const searchParams = new URLSearchParams(window.location.search);
 
+  let recipientToken: string | null = null;
+  const recipientMatch = pathname.match(/^\/invoice\/([a-zA-Z0-9_-]+)/);
   if (recipientMatch && recipientMatch[1] && recipientMatch[1] !== 'preview') {
-    return <RecipientInvoiceView token={recipientMatch[1]} />;
+    recipientToken = recipientMatch[1];
+  } else if (hash) {
+    const hashMatch = hash.match(/#\/?invoice\/([a-zA-Z0-9_-]+)/);
+    if (hashMatch && hashMatch[1] && hashMatch[1] !== 'preview') {
+      recipientToken = hashMatch[1];
+    }
   }
+
+  if (!recipientToken) {
+    const qToken = searchParams.get('token') || searchParams.get('invoice');
+    if (qToken && qToken !== 'preview') {
+      recipientToken = qToken;
+    }
+  }
+
+  if (recipientToken) {
+    return <RecipientInvoiceView token={recipientToken} />;
+  }
+
+  // Authentication state
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => dataService.isAuthenticated());
 
   // Internal App State
   const [activeTab, setActiveTab] = useState<string>('dashboard');
@@ -47,6 +71,23 @@ export default function App() {
     setAllUsers([...dataService.getAllUsers()]);
     setCurrentUser(dataService.getCurrentUser());
   };
+
+  const handleLogout = () => {
+    dataService.logout();
+    setIsAuthenticated(false);
+  };
+
+  if (!isAuthenticated) {
+    return (
+      <LoginView
+        onLoginSuccess={(user) => {
+          setIsAuthenticated(true);
+          setCurrentUser(user);
+          handleRefreshData();
+        }}
+      />
+    );
+  }
 
   const handleSwitchUser = (userId: string) => {
     dataService.switchActiveUser(userId);
@@ -127,6 +168,7 @@ export default function App() {
         onSwitchUser={handleSwitchUser}
         onOpenSetupGuide={() => setShowSetupGuide(true)}
         isSupabaseConnected={isSupabaseConfigured()}
+        onLogout={handleLogout}
       />
 
       {/* Main Container */}
@@ -151,6 +193,7 @@ export default function App() {
                 onEditDraft={handleEditDraft}
                 onDuplicate={handleDuplicate}
                 onCancelInvoice={handleCancelInvoice}
+                onRefresh={handleRefreshData}
               />
             )}
 
@@ -179,6 +222,14 @@ export default function App() {
               />
             )}
           </>
+        )}
+
+        {activeTab === 'drive' && (
+          <GoogleDriveView
+            currentUser={currentUser}
+            invoices={invoices}
+            onRefreshInvoices={handleRefreshData}
+          />
         )}
 
         {activeTab === 'klien' && (

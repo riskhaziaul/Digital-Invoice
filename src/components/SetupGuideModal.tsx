@@ -18,9 +18,12 @@ interface SetupGuideModalProps {
 }
 
 export const SetupGuideModal: React.FC<SetupGuideModalProps> = ({ isOpen, onClose }) => {
+  const [activeTab, setActiveTab] = useState<'cloudflare' | 'supabase' | 'netlify'>('cloudflare');
   const [copiedSQL, setCopiedSQL] = useState(false);
   const [copiedEnv, setCopiedEnv] = useState(false);
   const [copiedNetlify, setCopiedNetlify] = useState(false);
+  const [copiedWrangler, setCopiedWrangler] = useState(false);
+  const [copiedRedirects, setCopiedRedirects] = useState(false);
 
   if (!isOpen) return null;
 
@@ -233,20 +236,31 @@ SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...`;
   to = "/index.html"
   status = 200`;
 
+  const wranglerToml = `name = "invoice-digital"
+pages_build_output_dir = "dist"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+NODE_VERSION = "20.19.0"`;
+
+  const redirectsContent = `# Cloudflare Pages SPA Routing Redirects
+/*    /index.html   200`;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
       <div className="bg-white rounded-xl max-w-3xl w-full p-6 shadow-2xl border border-slate-200 max-h-[90vh] overflow-y-auto space-y-5">
         <div className="flex items-center justify-between border-b border-slate-100 pb-3">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-slate-900 text-white flex items-center justify-center font-bold">
-              ID
+            <div className="w-8 h-8 rounded-lg bg-orange-600 text-white flex items-center justify-center font-bold">
+              CF
             </div>
             <div>
               <h2 className="text-base font-bold text-slate-900">
-                Panduan Setup Netlify & Supabase
+                Panduan Deployment (Cloudflare Pages & Supabase)
               </h2>
               <p className="text-[11px] text-slate-500">
-                Langkah deployment full-stack siap produksi untuk "Invoice Digital".
+                Langkah konfigurasi resmi agar aplikasi ter-deploy dengan lancar tanpa error di Cloudflare Pages.
               </p>
             </div>
           </div>
@@ -258,110 +272,251 @@ SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...`;
           </button>
         </div>
 
-        {/* Status indicator */}
-        <div
-          className={`p-4 rounded-xl border flex items-center justify-between ${
-            isSupabaseConfigured()
-              ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
-              : 'bg-amber-50 border-amber-200 text-amber-900'
-          }`}
-        >
-          <div className="flex items-center gap-3">
-            <Database className="w-5 h-5" />
-            <div>
-              <h4 className="text-xs font-bold">
-                {isSupabaseConfigured()
-                  ? 'Supabase Terkoneksi'
-                  : 'Mode Lokal Terproteksi Aktif'}
+        {/* Tab Navigation */}
+        <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl text-xs font-semibold">
+          <button
+            type="button"
+            onClick={() => setActiveTab('cloudflare')}
+            className={`flex-1 py-2 px-3 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+              activeTab === 'cloudflare'
+                ? 'bg-white text-orange-600 shadow-xs font-bold'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Cloud className="w-3.5 h-3.5 text-orange-500" />
+            <span>Cloudflare Pages (Rekomendasi)</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('supabase')}
+            className={`flex-1 py-2 px-3 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+              activeTab === 'supabase'
+                ? 'bg-white text-emerald-700 shadow-xs font-bold'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Database className="w-3.5 h-3.5 text-emerald-600" />
+            <span>Supabase Database</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('netlify')}
+            className={`flex-1 py-2 px-3 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+              activeTab === 'netlify'
+                ? 'bg-white text-blue-700 shadow-xs font-bold'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <FileCode className="w-3.5 h-3.5 text-blue-600" />
+            <span>Netlify</span>
+          </button>
+        </div>
+
+        {/* Tab 1: Cloudflare Pages */}
+        {activeTab === 'cloudflare' && (
+          <div className="space-y-4 text-xs">
+            {/* Mengapa Cloudflare Gagal Sebelumnya & Solusinya */}
+            <div className="p-4 rounded-xl bg-orange-50/70 border border-orange-200 text-orange-950 space-y-2">
+              <h4 className="font-bold flex items-center gap-1.5 text-orange-900 text-xs">
+                <CheckCircle2 className="w-4 h-4 text-orange-600" />
+                Semua File Konfigurasi Cloudflare Pages Telah Disiapkan:
               </h4>
-              <p className="text-[11px]">
-                {isSupabaseConfigured()
-                  ? 'Kredensial database Supabase telah terpasang.'
-                  : 'Aplikasi saat ini berjalan mulus dengan data tersimpan di penyimpanan browser aman sampai Anda memasang kredensial Supabase.'}
+              <ul className="list-disc list-inside space-y-1 text-[11px] text-orange-900/90 leading-relaxed pl-1">
+                <li>
+                  <strong>Versi Node.js:</strong> File <code className="font-mono bg-white px-1 py-0.5 rounded border border-orange-200">.nvmrc</code> dan <code className="font-mono bg-white px-1 py-0.5 rounded border border-orange-200">.node-version</code> telah disetel ke <strong>Node 20.19.0</strong> agar Vite 8 ter-build sukses tanpa error Node version.
+                </li>
+                <li>
+                  <strong>SPA Routing (Mencegah 404):</strong> File <code className="font-mono bg-white px-1 py-0.5 rounded border border-orange-200">public/_redirects</code> telah ditambahkan dengan aturan <code className="font-mono font-bold">/* /index.html 200</code> sehingga saat refresh atau membuka link <code className="font-mono">/invoice/:id</code> tidak akan 404.
+                </li>
+                <li>
+                  <strong>Edge Functions:</strong> Folder <code className="font-mono bg-white px-1 py-0.5 rounded border border-orange-200">functions/api/</code> telah dibuat otomatis untuk melayani endpoint API di Cloudflare Pages.
+                </li>
+              </ul>
+            </div>
+
+            {/* Pengaturan Build di Dashboard Cloudflare */}
+            <div className="space-y-2">
+              <h4 className="font-bold text-slate-900 flex items-center gap-1.5">
+                <ExternalLink className="w-3.5 h-3.5 text-indigo-600" />
+                Cara 1: Deploy Melalui Cloudflare Pages Dashboard (Git)
+              </h4>
+              <p className="text-slate-600 text-[11px]">
+                Hubungkan repositori GitHub/GitLab Anda di menu <strong>Workers & Pages &gt; Create application &gt; Pages &gt; Connect to Git</strong>, lalu masukkan pengaturan berikut:
               </p>
+
+              <div className="border border-slate-200 rounded-xl overflow-hidden bg-slate-50">
+                <table className="w-full text-[11px]">
+                  <tbody className="divide-y divide-slate-200">
+                    <tr className="bg-white">
+                      <td className="p-2.5 font-bold text-slate-700 w-44">Framework preset</td>
+                      <td className="p-2.5 font-mono text-indigo-700 font-bold">Vite</td>
+                    </tr>
+                    <tr>
+                      <td className="p-2.5 font-bold text-slate-700">Build command</td>
+                      <td className="p-2.5 font-mono text-slate-900 font-bold bg-slate-100/50">npm run build</td>
+                    </tr>
+                    <tr className="bg-white">
+                      <td className="p-2.5 font-bold text-slate-700">Build output directory</td>
+                      <td className="p-2.5 font-mono text-slate-900 font-bold">dist</td>
+                    </tr>
+                    <tr>
+                      <td className="p-2.5 font-bold text-slate-700">Root directory</td>
+                      <td className="p-2.5 text-slate-500 italic">Biarkan kosong atau /</td>
+                    </tr>
+                    <tr className="bg-white">
+                      <td className="p-2.5 font-bold text-slate-700">Environment variable</td>
+                      <td className="p-2.5 font-mono text-slate-800">
+                        <span className="font-bold text-orange-700">NODE_VERSION</span> = <span className="font-bold">20.19.0</span>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Cara 2: Deploy via Wrangler CLI */}
+            <div className="space-y-2 pt-2 border-t border-slate-100">
+              <div className="flex items-center justify-between">
+                <h4 className="font-bold text-slate-900 flex items-center gap-1.5">
+                  <Cloud className="w-3.5 h-3.5 text-orange-600" />
+                  Cara 2: Deploy Cepat via Wrangler CLI (Terminal)
+                </h4>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText("npm run build && npx wrangler pages deploy dist");
+                    setCopiedWrangler(true);
+                    setTimeout(() => setCopiedWrangler(false), 2000);
+                  }}
+                  className="text-[11px] font-semibold text-orange-700 hover:text-orange-900 flex items-center gap-1 cursor-pointer"
+                >
+                  {copiedWrangler ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  {copiedWrangler ? 'Tersalin!' : 'Salin Perintah'}
+                </button>
+              </div>
+
+              <pre className="p-3 bg-slate-900 text-slate-200 text-[11px] font-mono rounded-lg overflow-x-auto leading-relaxed">
+{`# 1. Jalankan build aplikasi
+npm run build
+
+# 2. Deploy folder dist ke Cloudflare Pages
+npx wrangler pages deploy dist`}
+              </pre>
             </div>
           </div>
-          <span className="text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider bg-white/60">
-            {isSupabaseConfigured() ? 'Cloud Active' : 'Local Ready'}
-          </span>
-        </div>
+        )}
 
-        {/* Step 1: Supabase Database Schema */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-              <FileCode className="w-4 h-4 text-indigo-600" />
-              1. Skema Database PostgreSQL (Supabase SQL Migration)
-            </h3>
-            <button
-              onClick={() => {
-                navigator.clipboard.writeText(sqlSchema);
-                setCopiedSQL(true);
-                setTimeout(() => setCopiedSQL(false), 2000);
-              }}
-              className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
+        {/* Tab 2: Supabase */}
+        {activeTab === 'supabase' && (
+          <div className="space-y-4">
+            {/* Status indicator */}
+            <div
+              className={`p-4 rounded-xl border flex items-center justify-between ${
+                isSupabaseConfigured()
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                  : 'bg-amber-50 border-amber-200 text-amber-900'
+              }`}
             >
-              {copiedSQL ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-              {copiedSQL ? 'Tersalin!' : 'Salin Skema SQL'}
-            </button>
-          </div>
-          <pre className="p-3 bg-slate-900 text-slate-200 text-[10px] font-mono rounded-lg overflow-x-auto max-h-40 leading-relaxed">
-            {sqlSchema}
-          </pre>
-        </div>
+              <div className="flex items-center gap-3">
+                <Database className="w-5 h-5" />
+                <div>
+                  <h4 className="text-xs font-bold">
+                    {isSupabaseConfigured()
+                      ? 'Supabase Terkoneksi'
+                      : 'Mode Lokal Terproteksi Aktif'}
+                  </h4>
+                  <p className="text-[11px]">
+                    {isSupabaseConfigured()
+                      ? 'Kredensial database Supabase telah terpasang.'
+                      : 'Aplikasi saat ini berjalan mulus dengan data tersimpan di penyimpanan browser aman sampai Anda memasang kredensial Supabase.'}
+                  </p>
+                </div>
+              </div>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider bg-white/60">
+                {isSupabaseConfigured() ? 'Cloud Active' : 'Local Ready'}
+              </span>
+            </div>
 
-        {/* Step 2: Environment Variables */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-              <Shield className="w-4 h-4 text-emerald-600" />
-              2. Variabel Lingkungan (.env & Netlify Dashboard)
-            </h3>
-            <button
-              onClick={() => {
-                navigator.clipboard.writeText(envSample);
-                setCopiedEnv(true);
-                setTimeout(() => setCopiedEnv(false), 2000);
-              }}
-              className="text-[11px] font-semibold text-emerald-700 hover:text-emerald-900 flex items-center gap-1"
-            >
-              {copiedEnv ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-              {copiedEnv ? 'Tersalin!' : 'Salin Variabel .env'}
-            </button>
-          </div>
-          <pre className="p-3 bg-slate-900 text-slate-200 text-[10px] font-mono rounded-lg overflow-x-auto leading-relaxed">
-            {envSample}
-          </pre>
-        </div>
+            {/* Supabase Database Schema */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                  <FileCode className="w-4 h-4 text-indigo-600" />
+                  1. Skema Database PostgreSQL (Supabase SQL Editor)
+                </h3>
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(sqlSchema);
+                    setCopiedSQL(true);
+                    setTimeout(() => setCopiedSQL(false), 2000);
+                  }}
+                  className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 cursor-pointer"
+                >
+                  {copiedSQL ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  {copiedSQL ? 'Tersalin!' : 'Salin Skema SQL'}
+                </button>
+              </div>
+              <pre className="p-3 bg-slate-900 text-slate-200 text-[10px] font-mono rounded-lg overflow-x-auto max-h-48 leading-relaxed">
+                {sqlSchema}
+              </pre>
+            </div>
 
-        {/* Step 3: netlify.toml */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-              <Cloud className="w-4 h-4 text-blue-600" />
-              3. Konfigurasi netlify.toml
-            </h3>
-            <button
-              onClick={() => {
-                navigator.clipboard.writeText(netlifyToml);
-                setCopiedNetlify(true);
-                setTimeout(() => setCopiedNetlify(false), 2000);
-              }}
-              className="text-[11px] font-semibold text-blue-700 hover:text-blue-900 flex items-center gap-1"
-            >
-              {copiedNetlify ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-              {copiedNetlify ? 'Tersalin!' : 'Salin netlify.toml'}
-            </button>
+            {/* Environment Variables */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                  <Shield className="w-4 h-4 text-emerald-600" />
+                  2. Variabel Lingkungan (.env)
+                </h3>
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(envSample);
+                    setCopiedEnv(true);
+                    setTimeout(() => setCopiedEnv(false), 2000);
+                  }}
+                  className="text-[11px] font-semibold text-emerald-700 hover:text-emerald-900 flex items-center gap-1 cursor-pointer"
+                >
+                  {copiedEnv ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  {copiedEnv ? 'Tersalin!' : 'Salin Variabel .env'}
+                </button>
+              </div>
+              <pre className="p-3 bg-slate-900 text-slate-200 text-[10px] font-mono rounded-lg overflow-x-auto leading-relaxed">
+                {envSample}
+              </pre>
+            </div>
           </div>
-          <pre className="p-3 bg-slate-900 text-slate-200 text-[10px] font-mono rounded-lg overflow-x-auto leading-relaxed">
-            {netlifyToml}
-          </pre>
-        </div>
+        )}
+
+        {/* Tab 3: Netlify */}
+        {activeTab === 'netlify' && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                <Cloud className="w-4 h-4 text-blue-600" />
+                Konfigurasi netlify.toml
+              </h3>
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(netlifyToml);
+                  setCopiedNetlify(true);
+                  setTimeout(() => setCopiedNetlify(false), 2000);
+                }}
+                className="text-[11px] font-semibold text-blue-700 hover:text-blue-900 flex items-center gap-1 cursor-pointer"
+              >
+                {copiedNetlify ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                {copiedNetlify ? 'Tersalin!' : 'Salin netlify.toml'}
+              </button>
+            </div>
+            <pre className="p-3 bg-slate-900 text-slate-200 text-[10px] font-mono rounded-lg overflow-x-auto leading-relaxed">
+              {netlifyToml}
+            </pre>
+          </div>
+        )}
 
         <div className="flex justify-end pt-3 border-t border-slate-100">
           <button
             onClick={onClose}
-            className="px-5 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold"
+            className="px-5 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold cursor-pointer"
           >
             Mengerti, Tutup Panduan
           </button>

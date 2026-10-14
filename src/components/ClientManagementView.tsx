@@ -213,15 +213,35 @@ export const ClientManagementView: React.FC<ClientManagementViewProps> = ({
                     </div>
                   )}
                   {client.whatsapp && (
-                    <div className="flex items-center gap-2">
-                      <Phone className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                      <span>{client.whatsapp}</span>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 truncate">
+                        <Phone className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                        <span className="truncate">{client.whatsapp}</span>
+                      </div>
+                      <a
+                        href={`https://wa.me/${client.whatsapp.replace(/[^0-9]/g, '').replace(/^0/, '62')}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[10px] text-emerald-700 font-semibold bg-emerald-50 hover:bg-emerald-100 px-2 py-0.5 rounded border border-emerald-200 shrink-0 transition-colors"
+                        title="Buka obrolan WhatsApp"
+                      >
+                        WhatsApp
+                      </a>
                     </div>
                   )}
                   {client.email && (
-                    <div className="flex items-center gap-2">
-                      <Mail className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                      <span className="truncate">{client.email}</span>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 truncate">
+                        <Mail className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                        <span className="truncate">{client.email}</span>
+                      </div>
+                      <a
+                        href={`mailto:${client.email}`}
+                        className="text-[10px] text-blue-700 font-semibold bg-blue-50 hover:bg-blue-100 px-2 py-0.5 rounded border border-blue-200 shrink-0 transition-colors"
+                        title="Kirim pesan Email"
+                      >
+                        Email
+                      </a>
                     </div>
                   )}
                 </div>

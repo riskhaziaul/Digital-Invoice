@@ -8,11 +8,13 @@ import {
   UserCheck,
   Settings,
   History,
+  Cloud,
   Menu,
   X,
   Shield,
   ExternalLink,
   HelpCircle,
+  LogOut,
 } from 'lucide-react';
 import { UserProfile, UserRole } from '../types';
 
@@ -24,6 +26,7 @@ interface NavbarProps {
   onSwitchUser: (userId: string) => void;
   onOpenSetupGuide: () => void;
   isSupabaseConnected: boolean;
+  onLogout?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -34,6 +37,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onSwitchUser,
   onOpenSetupGuide,
   isSupabaseConnected,
+  onLogout,
 }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
@@ -46,7 +50,7 @@ export const Navbar: React.FC<NavbarProps> = ({
       return !['pengguna', 'pengaturan'].includes(tab);
     }
     if (currentUser.role === 'VIEWER') {
-      return ['dashboard', 'invoice', 'pembayaran', 'riwayat'].includes(tab);
+      return ['dashboard', 'invoice', 'pembayaran', 'riwayat', 'drive'].includes(tab);
     }
     return false;
   };
@@ -54,6 +58,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: FileText },
     { id: 'invoice', label: 'Invoice', icon: FileText },
+    { id: 'drive', label: 'Google Drive', icon: Cloud },
     { id: 'klien', label: 'Klien', icon: Building2 },
     { id: 'pembayaran', label: 'Pembayaran', icon: CreditCard },
     { id: 'template', label: 'Template Pesan', icon: MessageSquare },
@@ -126,15 +131,15 @@ export const Navbar: React.FC<NavbarProps> = ({
             <button
               onClick={onOpenSetupGuide}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors"
-              title="Panduan Setup Netlify & Supabase"
+              title="Panduan Deploy Cloudflare Pages & Supabase"
             >
               <span
                 className={`w-2 h-2 rounded-full ${
-                  isSupabaseConnected ? 'bg-emerald-500' : 'bg-amber-400 animate-pulse'
+                  isSupabaseConnected ? 'bg-emerald-500' : 'bg-orange-500'
                 }`}
               />
               <span className="hidden md:inline">
-                {isSupabaseConnected ? 'Supabase Terhubung' : 'Panduan Setup'}
+                {isSupabaseConnected ? 'Supabase Terhubung' : 'Panduan Deploy'}
               </span>
               <HelpCircle className="w-3.5 h-3.5 text-slate-400" />
             </button>
@@ -164,6 +169,19 @@ export const Navbar: React.FC<NavbarProps> = ({
                 {currentUser.role}
               </span>
             </div>
+
+            {/* Logout Button */}
+            {onLogout && (
+              <button
+                type="button"
+                onClick={onLogout}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-rose-600 hover:bg-rose-50 hover:border-rose-200 transition-colors cursor-pointer"
+                title="Keluar dari akun ini"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Keluar</span>
+              </button>
+            )}
 
             {/* Mobile Menu Toggle Button */}
             <button
