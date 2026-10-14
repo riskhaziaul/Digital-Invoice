@@ -6,3 +6,5 @@ compatibility_flags = ["nodejs_compat"]
 
 [vars]
 NODE_VERSION = "20.19.0"
+
+npm run build && npx wrangler pages deploy dist
